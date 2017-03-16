@@ -1,0 +1,229 @@
+#!/bin/sh
+
+# Welcome to the thoughtbot laptop script!
+# Be prepared to turn your laptop (or desktop, no haters here)
+# into an awesome development machine.
+
+fancy_echo() {
+  local fmt="$1"; shift
+
+  # shellcheck disable=SC2059
+  printf "\n$fmt\n" "$@"
+}
+
+append_to_zshrc() {
+  local text="$1" zshrc
+  local skip_new_line="${2:-0}"
+
+  if [ -w "$HOME/.zshrc.local" ]; then
+    zshrc="$HOME/.zshrc.local"
+  else
+    zshrc="$HOME/.zshrc"
+  fi
+
+  if ! grep -Fqs "$text" "$zshrc"; then
+    if [ "$skip_new_line" -eq 1 ]; then
+      printf "%s\n" "$text" >> "$zshrc"
+    else
+      printf "\n%s\n" "$text" >> "$zshrc"
+    fi
+  fi
+}
+
+# shellcheck disable=SC2154
+trap 'ret=$?; test $ret -ne 0 && printf "failed\n\n" >&2; exit $ret' EXIT
+
+set -e
+
+if [ ! -d "$HOME/.bin/" ]; then
+  mkdir "$HOME/.bin"
+fi
+
+
+fancy_echo "Installing ohh-my-zsh"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
+
+# shellcheck disable=SC2016
+append_to_zshrc 'export PATH="$HOME/.bin:$PATH"'
+
+HOMEBREW_PREFIX="/usr/local"
+
+if [ -d "$HOMEBREW_PREFIX" ]; then
+  if ! [ -r "$HOMEBREW_PREFIX" ]; then
+    sudo chown -R "$LOGNAME:admin" /usr/local
+  fi
+else
+  sudo mkdir "$HOMEBREW_PREFIX"
+  sudo chflags norestricted "$HOMEBREW_PREFIX"
+  sudo chown -R "$LOGNAME:admin" "$HOMEBREW_PREFIX"
+fi
+
+update_shell() {
+  local shell_path;
+  shell_path="$(which zsh)"
+
+  fancy_echo "Changing your shell to zsh ..."
+  if ! grep "$shell_path" /etc/shells > /dev/null 2>&1 ; then
+    fancy_echo "Adding '$shell_path' to /etc/shells"
+    sudo sh -c "echo $shell_path >> /etc/shells"
+  fi
+  chsh -s "$shell_path"
+}
+
+case "$SHELL" in
+  */zsh)
+    if [ "$(which zsh)" != '/bin/zsh' ] ; then
+      update_shell
+    fi
+    ;;
+  *)
+    update_shell
+    ;;
+esac
+
+gem_install_or_update() {
+  if gem list "$1" --installed > /dev/null; then
+    gem update "$@"
+  else
+    gem install "$@"
+    rbenv rehash
+  fi
+}
+
+if ! command -v brew >/dev/null; then
+  fancy_echo "Installing Homebrew ..."
+    curl -fsS \
+      'https://raw.githubusercontent.com/Homebrew/install/master/install' | ruby
+
+    append_to_zshrc '# recommended by brew doctor'
+
+    # shellcheck disable=SC2016
+    append_to_zshrc 'export PATH="/usr/local/bin:$PATH"' 1
+    append_to_zshrc 'export PATH="/usr/local/sbin:$PATH"' 1
+
+    export PATH="/usr/local/bin:$PATH"
+fi
+
+if brew list | grep -Fq brew-cask; then
+  fancy_echo "Uninstalling old Homebrew-Cask ..."
+  brew uninstall --force brew-cask
+fi
+
+fancy_echo "Updating Homebrew formulae ..."
+brew update
+brew bundle --file=- <<EOF
+tap "homebrew/services"
+tap 'caskroom/cask'
+
+# Unix
+brew "ctags"
+brew "git"
+brew "tig"
+brew "mercurial"
+brew "openssl"
+brew "reattach-to-user-namespace"
+brew "the_silver_searcher"
+brew "tmux"
+brew "vim"
+brew "zsh"
+brew "wget"
+brew "curl"
+brew "direnv"
+brew "htop"
+brew "ack"
+brew "entr"
+
+cask "xquartz"
+
+# Image manipulation
+brew "imagemagick"
+
+# Testing
+brew "qt"
+
+# Programming languages
+brew "libyaml" # should come after openssl
+brew "node"
+brew "homebrew/dupes/apple-gcc42"
+cask 'java'
+
+# Databases
+brew "postgres"
+brew "redis"
+brew "mysql"
+brew "memcached"
+brew "pass"
+
+# Apps
+cask 'google-chrome'
+cask 'firefox'
+cask 'atom'
+cask 'sublime-text'
+cask 'controlplane'
+cask 'iterm2'
+cask 'slack'
+cask 'sourcetree'
+cask 'virtualbox'
+cask 'arduino'
+
+# Fonts
+cask "caskroom/fonts/font-hack"
+cask "caskroom/fonts/font-fira-mono"
+cask "caskroom/fonts/font-fira-sans"
+cask "caskroom/fonts/font-fira-code"
+cask "caskroom/fonts/font-office-code-pro"
+cask "caskroom/fonts/font-source-code-pro"
+
+EOF
+
+brew pin mysql
+brew pin postgresql
+
+fancy_echo "Installing asdf ..."
+find_latest_asdf() {
+  asdf list-all "$1" | grep -v - | tail -1 | sed -e 's/^ *//'
+}
+asdf_plugin_present() {
+  $(asdf plugin-list | grep "$1" > /dev/null)
+  return $?
+}
+
+if ! [ -d ~/.asdf ]; then
+  git clone https://github.com/asdf-vm/asdf.git ~/.asdf --branch v0.2.1
+fi
+
+append_to_zshrc '. $HOME/.asdf/asdf.sh'
+append_to_zshrc '. $HOME/.asdf/completions/asdf.bash'
+source $HOME/.asdf/asdf.sh
+
+asdf_plugin_present golang || asdf plugin-add golang https://github.com/kennyp/asdf-golang.git
+asdf_plugin_present elixir || asdf plugin-add elixir https://github.com/asdf-vm/asdf-elixir.git
+asdf_plugin_present erlang || asdf plugin-add erlang https://github.com/asdf-vm/asdf-erlang.git
+asdf_plugin_present php || asdf plugin-add php https://github.com/odarriba/asdf-php.git
+asdf_plugin_present ruby || asdf plugin-add ruby https://github.com/asdf-vm/asdf-ruby.git
+
+ruby_version=$(find_latest_asdf ruby)
+fancy_echo "Installing ruby $ruby_version"
+asdf install ruby $ruby_version
+asdf global ruby $ruby_version
+
+(
+  export CPPFLAGS=-I/opt/X11/include
+  export CC=/usr/local/bin/gcc-4.2
+  ruby18="1.8.7-p358"
+  fancy_echo "Installing ruby $ruby18"
+  asdf install ruby $ruby18
+)
+
+# configure ruby
+gem update --system
+gem_install_or_update 'bundler'
+number_of_cores=$(sysctl -n hw.ncpu)
+bundle config --global jobs $((number_of_cores - 1))
+
+if [ -f "$HOME/.laptop.local" ]; then
+  fancy_echo "Running your customizations from ~/.laptop.local ..."
+  # shellcheck disable=SC1090
+  . "$HOME/.laptop.local"
+fi
+
