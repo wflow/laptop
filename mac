@@ -215,6 +215,18 @@ asdf global ruby $ruby_version
   ruby18="1.8.7-p358"
   fancy_echo "Installing ruby $ruby18"
   asdf install ruby $ruby18
+  if ! [ -x "$(asdf where ruby 1.8.7-p358)/bin/gem" ]; then
+    fancy_echo "Installing rubygems for ruby $ruby18"
+    mkdir /tmp/187 && cd /tmp/187
+    asdf local ruby 1.8.7-p358
+
+    wget https://rubygems.org/rubygems/rubygems-2.6.11.tgz
+    tar xvzf rubygems-2.6.11.tgz
+    cd rubygems-2.6.11
+
+    ruby setup.rb
+    asdf reshim ruby $ruby18
+  fi
 )
 
 # configure ruby
